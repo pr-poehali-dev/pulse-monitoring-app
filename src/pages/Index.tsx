@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
+import { usePulseDetection } from '@/hooks/usePulseDetection';
 
 interface Measurement {
   id: string;
@@ -18,11 +19,11 @@ interface Measurement {
 }
 
 const Index = () => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [currentHR, setCurrentHR] = useState(0);
   const [measurementType, setMeasurementType] = useState<'resting' | 'standing'>('resting');
   const [restingHR, setRestingHR] = useState<number | null>(null);
+  const [completedHR, setCompletedHR] = useState<number | null>(null);
+  
+  const pulseDetection = usePulseDetection(10);
   const [measurements, setMeasurements] = useState<Measurement[]>([
     {
       id: '1',
@@ -77,27 +78,15 @@ const Index = () => {
     }
   };
 
-  const startMeasurement = () => {
-    setIsRecording(true);
-    setProgress(0);
-    setCurrentHR(0);
+  const startMeasurement = async () => {
+    setCompletedHR(null);
+    await pulseDetection.startDetection();
+  };
 
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          return 100;
-        }
-        return prev + 2;
-      });
-
-      setCurrentHR(Math.floor(Math.random() * 20) + (measurementType === 'resting' ? 60 : 85));
-    }, 100);
-
-    setTimeout(() => {
-      setIsRecording(false);
-      const finalHR = Math.floor(Math.random() * 10) + (measurementType === 'resting' ? 65 : 90);
-      setCurrentHR(finalHR);
+  useEffect(() => {
+    if (pulseDetection.finalBPM && !pulseDetection.isDetecting) {
+      const finalHR = pulseDetection.finalBPM;
+      setCompletedHR(finalHR);
 
       if (measurementType === 'resting') {
         setRestingHR(finalHR);
@@ -119,8 +108,8 @@ const Index = () => {
         setMeasurements([newMeasurement, ...measurements]);
         toast.success('Измерение завершено! Результат добавлен в историю.');
       }
-    }, 5000);
-  };
+    }
+  }, [pulseDetection.finalBPM, pulseDetection.isDetecting]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -201,7 +190,7 @@ const Index = () => {
                   <Button
                     variant={measurementType === 'resting' ? 'default' : 'outline'}
                     onClick={() => setMeasurementType('resting')}
-                    disabled={isRecording}
+                    disabled={pulseDetection.isDetecting}
                     className="flex items-center gap-2"
                   >
                     <Icon name="Bed" size={20} />
@@ -210,7 +199,7 @@ const Index = () => {
                   <Button
                     variant={measurementType === 'standing' ? 'default' : 'outline'}
                     onClick={() => setMeasurementType('standing')}
-                    disabled={isRecording || !restingHR}
+                    disabled={pulseDetection.isDetecting || !restingHR}
                     className="flex items-center gap-2"
                   >
                     <Icon name="User" size={20} />
@@ -227,14 +216,33 @@ const Index = () => {
                   </div>
                 )}
 
+                {pulseDetection.error && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                    <Icon name="AlertCircle" size={24} className="mx-auto mb-2 text-red-600" />
+                    <p className="text-sm text-red-800">{pulseDetection.error}</p>
+                  </div>
+                )}
+
                 <div className="relative">
-                  <div className="aspect-video bg-gradient-to-br from-primary/20 to-secondary/20 rounded-lg flex items-center justify-center overflow-hidden">
-                    {isRecording && (
-                      <div className="pulse-animation">
-                        <Icon name="Heart" size={120} className="text-primary" />
+                  <div className="aspect-video bg-gradient-to-br from-primary/20 to-secondary/20 rounded-lg flex items-center justify-center overflow-hidden relative">
+                    <video
+                      ref={pulseDetection.videoRef}
+                      className="absolute inset-0 w-full h-full object-cover"
+                      playsInline
+                      muted
+                      style={{ display: pulseDetection.isDetecting ? 'block' : 'none' }}
+                    />
+                    <canvas
+                      ref={pulseDetection.canvasRef}
+                      className="hidden"
+                    />
+                    {pulseDetection.isDetecting && (
+                      <div className="absolute top-4 left-4 bg-black/70 text-white px-4 py-2 rounded-lg">
+                        <Icon name="Video" size={20} className="inline mr-2" />
+                        <span className="text-sm font-medium">Приложите палец к камере</span>
                       </div>
                     )}
-                    {!isRecording && (
+                    {!pulseDetection.isDetecting && (
                       <div className="text-center space-y-2">
                         <Icon name="Camera" size={80} className="text-muted-foreground mx-auto" />
                         <p className="text-muted-foreground">Камера готова к измерению</p>
@@ -243,23 +251,25 @@ const Index = () => {
                   </div>
                 </div>
 
-                {isRecording && (
+                {pulseDetection.isDetecting && (
                   <div className="space-y-4">
                     <div className="text-center">
-                      <div className="text-6xl font-bold text-primary mb-2">{currentHR}</div>
+                      <div className="text-6xl font-bold text-primary mb-2 pulse-animation">
+                        {pulseDetection.currentBPM || '--'}
+                      </div>
                       <p className="text-muted-foreground">уд/мин</p>
                     </div>
-                    <Progress value={progress} className="h-2" />
+                    <Progress value={pulseDetection.progress} className="h-2" />
                     <p className="text-center text-sm text-muted-foreground">
-                      Измерение... {Math.round(progress)}%
+                      Измерение... {Math.round(pulseDetection.progress)}%
                     </p>
                   </div>
                 )}
 
-                {!isRecording && currentHR > 0 && (
+                {!pulseDetection.isDetecting && completedHR && (
                   <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
                     <Icon name="CheckCircle2" size={48} className="text-green-600 mx-auto mb-3" />
-                    <div className="text-4xl font-bold text-green-700 mb-2">{currentHR}</div>
+                    <div className="text-4xl font-bold text-green-700 mb-2">{completedHR}</div>
                     <p className="text-green-700 font-medium">уд/мин</p>
                     <p className="text-sm text-muted-foreground mt-2">
                       {measurementType === 'resting' ? 'Пульс в покое' : 'Пульс стоя'}
@@ -269,11 +279,11 @@ const Index = () => {
 
                 <Button
                   onClick={startMeasurement}
-                  disabled={isRecording || (measurementType === 'standing' && !restingHR)}
+                  disabled={pulseDetection.isDetecting || (measurementType === 'standing' && !restingHR)}
                   className="w-full h-14 text-lg"
                   size="lg"
                 >
-                  {isRecording ? (
+                  {pulseDetection.isDetecting ? (
                     <>
                       <Icon name="Loader2" size={24} className="mr-2 animate-spin" />
                       Измерение...
