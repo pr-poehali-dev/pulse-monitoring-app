@@ -211,9 +211,23 @@ export const usePulseDetection = (durationSeconds: number = 15): PulseDetectionR
         animationFrameRef.current = requestAnimationFrame(analyzeFrame);
       }, 500);
 
-    } catch (err) {
+    } catch (err: any) {
       console.error('Camera error:', err);
-      setError('Не удалось получить доступ к камере. Проверьте разрешения.');
+      let errorMessage = 'Не удалось получить доступ к камере.';
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errorMessage = 'Доступ к камере запрещен. Разрешите доступ в настройках браузера.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        errorMessage = 'Камера не найдена на устройстве.';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        errorMessage = 'Камера уже используется другим приложением.';
+      } else if (err.name === 'OverconstrainedError') {
+        errorMessage = 'Камера не поддерживает требуемые параметры.';
+      } else if (err.name === 'SecurityError') {
+        errorMessage = 'Доступ к камере возможен только через HTTPS.';
+      }
+      
+      setError(errorMessage);
       setIsDetecting(false);
     }
   };

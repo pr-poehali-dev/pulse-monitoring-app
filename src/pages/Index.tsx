@@ -223,9 +223,22 @@ const Index = () => {
                 )}
 
                 {pulseDetection.error && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                     <Icon name="AlertCircle" size={24} className="mx-auto mb-2 text-red-600" />
-                    <p className="text-sm text-red-800">{pulseDetection.error}</p>
+                    <p className="text-sm text-red-800 text-center mb-3">{pulseDetection.error}</p>
+                    {pulseDetection.error.includes('разрешен') && (
+                      <div className="text-xs text-red-700 space-y-1">
+                        <p className="font-semibold">Как разрешить доступ:</p>
+                        <p>1. Нажмите на иконку замка/камеры в адресной строке</p>
+                        <p>2. Выберите "Разрешить" для камеры</p>
+                        <p>3. Обновите страницу</p>
+                      </div>
+                    )}
+                    {pulseDetection.error.includes('HTTPS') && (
+                      <div className="text-xs text-red-700 text-center">
+                        <p>Откройте сайт через опубликованную ссылку (HTTPS)</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
