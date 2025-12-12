@@ -105,11 +105,17 @@ const Index = () => {
           status: rec.status
         };
         
-        setMeasurements([newMeasurement, ...measurements]);
+        setMeasurements(prev => [newMeasurement, ...prev]);
         toast.success('Измерение завершено! Результат добавлен в историю.');
       }
     }
-  }, [pulseDetection.finalBPM, pulseDetection.isDetecting]);
+  }, [pulseDetection.finalBPM, pulseDetection.isDetecting, measurementType, restingHR]);
+
+  useEffect(() => {
+    if (pulseDetection.error) {
+      toast.error(pulseDetection.error);
+    }
+  }, [pulseDetection.error]);
 
   const getStatusColor = (status: string) => {
     switch (status) {

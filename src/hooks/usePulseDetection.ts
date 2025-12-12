@@ -30,14 +30,16 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
   const startTimeRef = useRef<number>(0);
 
   const analyzeFrame = () => {
-    if (!videoRef.current || !canvasRef.current || !isDetecting) return;
+    if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     if (!ctx || video.readyState !== video.HAVE_ENOUGH_DATA) {
-      animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+      if (isDetecting) {
+        animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+      }
       return;
     }
 
@@ -56,29 +58,31 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
       const green = data[i + 1];
       const blue = data[i + 2];
 
-      if (red > 60 && green > 40 && blue > 20 && red > green && red > blue) {
+      if (red > 60 && green > 40 && blue > 20) {
         redSum += red;
         pixelCount++;
       }
     }
 
-    if (pixelCount > 1000) {
+    if (pixelCount > 100) {
       const avgRed = redSum / pixelCount;
       redValuesRef.current.push(avgRed);
 
-      if (redValuesRef.current.length > 256) {
+      if (redValuesRef.current.length > 300) {
         redValuesRef.current.shift();
       }
 
-      if (redValuesRef.current.length >= 30) {
+      if (redValuesRef.current.length >= 50) {
         const bpm = calculateBPM(redValuesRef.current);
-        if (bpm > 40 && bpm < 200) {
+        if (bpm > 45 && bpm < 180) {
           setCurrentBPM(Math.round(bpm));
         }
       }
     }
 
-    animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+    if (isDetecting) {
+      animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+    }
   };
 
   const calculateBPM = (values: number[]): number => {
@@ -143,9 +147,12 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
       }, 100);
 
       timeoutRef.current = window.setTimeout(() => {
+        const finalValue = redValuesRef.current.length >= 50 ? calculateBPM(redValuesRef.current) : 0;
         stopDetection();
-        if (currentBPM > 40 && currentBPM < 200) {
-          setFinalBPM(currentBPM);
+        if (finalValue > 45 && finalValue < 180) {
+          setFinalBPM(Math.round(finalValue));
+        } else {
+          setError('Не удалось определить пульс. Убедитесь, что палец плотно закрывает камеру.');
         }
       }, durationSeconds * 1000);
 
