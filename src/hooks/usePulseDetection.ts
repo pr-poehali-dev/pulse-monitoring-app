@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 interface PulseDetectionResult {
   currentBPM: number;
@@ -12,7 +12,7 @@ interface PulseDetectionResult {
   canvasRef: React.RefObject<HTMLCanvasElement>;
 }
 
-export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionResult => {
+export const usePulseDetection = (durationSeconds: number = 15): PulseDetectionResult => {
   const [currentBPM, setCurrentBPM] = useState(0);
   const [finalBPM, setFinalBPM] = useState<number | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
@@ -27,9 +27,47 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
   const timeoutRef = useRef<number | null>(null);
 
   const redValuesRef = useRef<number[]>([]);
+  const timestampsRef = useRef<number[]>([]);
   const startTimeRef = useRef<number>(0);
+  const lastPeakTimeRef = useRef<number>(0);
 
-  const analyzeFrame = () => {
+  const calculateBPM = useCallback((values: number[], timestamps: number[]): number => {
+    if (values.length < 60) return 0;
+
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const normalized = values.map(v => v - mean);
+
+    const peaks: number[] = [];
+    const minPeakDistance = 300;
+
+    for (let i = 2; i < normalized.length - 2; i++) {
+      if (
+        normalized[i] > normalized[i - 1] &&
+        normalized[i] > normalized[i - 2] &&
+        normalized[i] > normalized[i + 1] &&
+        normalized[i] > normalized[i + 2] &&
+        normalized[i] > 0
+      ) {
+        if (peaks.length === 0 || timestamps[i] - peaks[peaks.length - 1] > minPeakDistance) {
+          peaks.push(timestamps[i]);
+        }
+      }
+    }
+
+    if (peaks.length < 2) return 0;
+
+    const intervals: number[] = [];
+    for (let i = 1; i < peaks.length; i++) {
+      intervals.push(peaks[i] - peaks[i - 1]);
+    }
+
+    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    const bpm = 60000 / avgInterval;
+
+    return bpm;
+  }, []);
+
+  const analyzeFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
@@ -43,39 +81,66 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
       return;
     }
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    
+    if (width === 0 || height === 0) {
+      if (isDetecting) {
+        animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+      }
+      return;
+    }
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    canvas.width = width;
+    canvas.height = height;
+    ctx.drawImage(video, 0, 0, width, height);
+
+    const centerX = Math.floor(width / 2);
+    const centerY = Math.floor(height / 2);
+    const sampleSize = Math.min(width, height) / 3;
+
+    const imageData = ctx.getImageData(
+      centerX - sampleSize / 2,
+      centerY - sampleSize / 2,
+      sampleSize,
+      sampleSize
+    );
     const data = imageData.data;
 
     let redSum = 0;
-    let pixelCount = 0;
+    let greenSum = 0;
+    let blueSum = 0;
+    let count = 0;
 
     for (let i = 0; i < data.length; i += 4) {
-      const red = data[i];
-      const green = data[i + 1];
-      const blue = data[i + 2];
-
-      if (red > 60 && green > 40 && blue > 20) {
-        redSum += red;
-        pixelCount++;
-      }
+      redSum += data[i];
+      greenSum += data[i + 1];
+      blueSum += data[i + 2];
+      count++;
     }
 
-    if (pixelCount > 100) {
-      const avgRed = redSum / pixelCount;
-      redValuesRef.current.push(avgRed);
+    if (count > 0) {
+      const avgRed = redSum / count;
+      const avgGreen = greenSum / count;
+      const avgBlue = blueSum / count;
 
-      if (redValuesRef.current.length > 300) {
-        redValuesRef.current.shift();
-      }
+      const brightness = (avgRed + avgGreen + avgBlue) / 3;
 
-      if (redValuesRef.current.length >= 50) {
-        const bpm = calculateBPM(redValuesRef.current);
-        if (bpm > 45 && bpm < 180) {
-          setCurrentBPM(Math.round(bpm));
+      if (brightness > 80 && brightness < 240) {
+        const timestamp = Date.now();
+        redValuesRef.current.push(avgRed);
+        timestampsRef.current.push(timestamp);
+
+        if (redValuesRef.current.length > 450) {
+          redValuesRef.current.shift();
+          timestampsRef.current.shift();
+        }
+
+        if (redValuesRef.current.length >= 60 && timestamp - startTimeRef.current > 3000) {
+          const bpm = calculateBPM(redValuesRef.current, timestampsRef.current);
+          if (bpm > 40 && bpm < 200) {
+            setCurrentBPM(Math.round(bpm));
+          }
         }
       }
     }
@@ -83,35 +148,7 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
     if (isDetecting) {
       animationFrameRef.current = requestAnimationFrame(analyzeFrame);
     }
-  };
-
-  const calculateBPM = (values: number[]): number => {
-    if (values.length < 30) return 0;
-
-    const mean = values.reduce((a, b) => a + b) / values.length;
-    const detrended = values.map(v => v - mean);
-
-    let maxPeak = 0;
-    let peakCount = 0;
-    const threshold = Math.max(...detrended.map(Math.abs)) * 0.5;
-
-    for (let i = 1; i < detrended.length - 1; i++) {
-      if (
-        detrended[i] > threshold &&
-        detrended[i] > detrended[i - 1] &&
-        detrended[i] > detrended[i + 1]
-      ) {
-        peakCount++;
-        maxPeak = Math.max(maxPeak, detrended[i]);
-      }
-    }
-
-    const fps = 30;
-    const durationInSeconds = values.length / fps;
-    const bpm = (peakCount / durationInSeconds) * 60;
-
-    return bpm;
-  };
+  }, [isDetecting, calculateBPM]);
 
   const startDetection = async () => {
     try {
@@ -120,17 +157,29 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
       setCurrentBPM(0);
       setProgress(0);
       redValuesRef.current = [];
+      timestampsRef.current = [];
+      lastPeakTimeRef.current = 0;
 
       const constraints = {
         video: {
           facingMode: 'environment',
-          width: { ideal: 640 },
-          height: { ideal: 480 }
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         }
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
+
+      const track = stream.getVideoTracks()[0];
+      const capabilities = track.getCapabilities();
+      
+      if ('torch' in capabilities) {
+        await track.applyConstraints({
+          // @ts-ignore
+          advanced: [{ torch: true }]
+        });
+      }
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -147,16 +196,20 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
       }, 100);
 
       timeoutRef.current = window.setTimeout(() => {
-        const finalValue = redValuesRef.current.length >= 50 ? calculateBPM(redValuesRef.current) : 0;
+        const finalValue = redValuesRef.current.length >= 60 
+          ? calculateBPM(redValuesRef.current, timestampsRef.current) 
+          : 0;
         stopDetection();
-        if (finalValue > 45 && finalValue < 180) {
+        if (finalValue > 40 && finalValue < 200) {
           setFinalBPM(Math.round(finalValue));
         } else {
-          setError('Не удалось определить пульс. Убедитесь, что палец плотно закрывает камеру.');
+          setError('Не удалось определить пульс. Плотно приложите палец к камере и держите неподвижно.');
         }
       }, durationSeconds * 1000);
 
-      animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+      setTimeout(() => {
+        animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+      }, 500);
 
     } catch (err) {
       console.error('Camera error:', err);
@@ -184,7 +237,16 @@ export const usePulseDetection = (durationSeconds: number = 10): PulseDetectionR
     }
 
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      const tracks = streamRef.current.getTracks();
+      tracks.forEach(track => {
+        if ('torch' in track.getCapabilities()) {
+          track.applyConstraints({
+            // @ts-ignore
+            advanced: [{ torch: false }]
+          }).catch(() => {});
+        }
+        track.stop();
+      });
       streamRef.current = null;
     }
 
